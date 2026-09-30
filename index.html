@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hidden roulettes</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#6c4cf1">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ruletas">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+<style>
+:root{--bg:#f6f5f2;--card:#fff;--tx:#1d1d1f;--mut:#6b6b70;--bd:#e2e0da;--ac:#6c4cf1;--acx:#fff}
+@media(prefers-color-scheme:dark){:root{--bg:#141417;--card:#1e1e23;--tx:#f0f0f2;--mut:#9a9aa3;--bd:#2f2f37;--ac:#8b71ff}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.app{max-width:960px;margin:0 auto;padding:16px;display:grid;grid-template-columns:240px 1fr;gap:16px}
+@media(max-width:720px){.app{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px}
+h1{font-size:18px;margin:0 0 10px}
+button{font:inherit;cursor:pointer;border-radius:10px;border:1px solid var(--bd);background:var(--card);color:var(--tx);padding:8px 12px}
+button.p{background:var(--ac);color:var(--acx);border-color:var(--ac);font-weight:600}
+button:disabled{opacity:.5;cursor:default}
+#list{display:flex;flex-direction:column;gap:6px;margin:10px 0;max-height:320px;overflow-y:auto}
+.it{display:flex;justify-content:space-between;align-items:center;text-align:left;width:100%}
+.it.on{border-color:var(--ac);box-shadow:0 0 0 1px var(--ac)}
+.it span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.it small{color:var(--mut);margin-left:8px}
+input[type=text],textarea{width:100%;font:inherit;color:var(--tx);background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:9px}
+textarea{min-height:160px;resize:vertical}
+.stage{position:relative;width:min(100%,420px);margin:12px auto}
+canvas{width:100%;aspect-ratio:1;display:block}
+.ptr{position:absolute;top:-6px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:13px solid transparent;border-right:13px solid transparent;border-top:26px solid var(--tx);filter:drop-shadow(0 2px 2px rgba(0,0,0,.3))}
+#res{min-height:48px;text-align:center;font-size:24px;font-weight:700;margin:6px 0;word-break:break-word}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+label{font-size:13px;color:var(--mut);display:block;margin:10px 0 4px}
+#st{font-size:13px;color:var(--mut)}
+#off{display:none;background:#e8eefc;color:#1b3a7a;border-radius:10px;padding:10px;margin-bottom:12px;font-size:14px}
+#warn{display:none;background:#fff3cd;color:#664d03;border-radius:10px;padding:10px;margin-bottom:12px;font-size:14px}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="card">
+    <h1>Hidden roulettes</h1>
+    <button class="p" id="new" style="width:100%">+ Nueva ruleta</button>
+    <div id="list"></div>
+    <button id="refresh" style="width:100%">↻ Actualizar lista</button>
+  </aside>
+  <main class="card">
+    <div id="off"></div>
+    <div id="warn">Falta configurar Supabase: completá SUPABASE_URL y SUPABASE_KEY al inicio del script.</div>
+    <label for="name" style="margin-top:0">Nombre</label>
+    <input type="text" id="name" readonly placeholder="Nombre de la ruleta">
+    <div class="stage"><div class="ptr"></div><canvas id="cv"></canvas></div>
+    <div id="res"></div>
+    <div class="row" style="justify-content:center">
+      <button class="p" id="spin" style="padding:11px 28px;font-size:16px">¡Girar!</button>
+    </div>
+    <label for="opts">Opciones (una por línea) — <span id="cnt">0</span></label>
+    <textarea id="opts" readonly placeholder="Pizza&#10;Sushi&#10;Empanadas"></textarea>
+    <div class="row" style="margin-top:10px;justify-content:space-between">
+      <span id="st"></span>
+      <button id="del">Eliminar ruleta</button>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" crossorigin="anonymous"></script>
+<script>
+/* ====== CONFIGURACIÓN ====== */
+const SUPABASE_URL = 'https://jqyjjbibkfwfgqcvyfxf.supabase.co';       // https://xxxx.supabase.co
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpxeWpqYmlia2Z3ZmdxY3Z5ZnhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA3MjY4NDAsImV4cCI6MjEwNjMwMjg0MH0.JqUpQgU-lLlsXbQWm0EUicWeFySqmVXYqJDFpfdct7I';  // Project Settings > API > anon public
+/* =========================== */
+
+const $ = id => document.getElementById(id);
+const ok = !SUPABASE_URL.startsWith('PEGA');
+if (!ok) $('warn').style.display = 'block';
+const db = ok ? supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+
+let wheels = [];          // [{id,name,item_count}]
+let cur = null;           // {id,name,items}
+let rot = 0, spinning = false, off = null;
+const cv = $('cv'), ctx = cv.getContext('2d');
+
+const status = t => $('st').textContent = t;
+const safe = fn => { try { return fn() } catch (e) {} };
+
+/* ---- Caché local en IndexedDB (guarda las ruletas como JSON) ---- */
+const idb = new Promise((res, rej) => {
+  const rq = indexedDB.open('ruletas', 1);
+  rq.onupgradeneeded = () => { rq.result.createObjectStore('wheels', { keyPath: 'id' }); rq.result.createObjectStore('meta'); };
+  rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error);
+});
+const tx = (store, mode, fn) => idb.then(d => new Promise((res, rej) => {
+  const t = d.transaction(store, mode), r = fn(t.objectStore(store));
+  t.oncomplete = () => res(r && r.result); t.onerror = () => rej(t.error);
+})).catch(() => null);
+const cacheAll = () => tx('wheels', 'readonly', st => st.getAll());
+const cacheGet = id => tx('wheels', 'readonly', st => st.get(id));
+const cachePut = w => tx('wheels', 'readwrite', st => st.put(w));
+const cacheDel = id => tx('wheels', 'readwrite', st => st.delete(id));
+const metaSet = (k, v) => tx('meta', 'readwrite', st => st.put(v, k));
+const metaGet = k => tx('meta', 'readonly', st => st.get(k));
+
+let offline = false;
+function setOffline(v, since) {
+  offline = v;
+  $('off').style.display = v ? 'block' : 'none';
+  if (v) $('off').textContent = 'Sin conexión: usando los últimos datos guardados' +
+    (since ? ' (' + new Date(since).toLocaleString('es-AR') + ')' : '') + '. Podés girar, pero no editar.';
+  $('name').readOnly = $('opts').readOnly = v || !cur;
+  $('new').disabled = $('del').disabled = v;
+}
+
+async function loadList(keep) {
+  if (!db) return;
+  const local = (await cacheAll()) || [];
+  let data = null;
+  if (navigator.onLine) {
+    const r = await db.from('wheels').select('id,name,item_count,updated_at,created_at').order('created_at');
+    if (!r.error) data = r.data; else status('Error al cargar: ' + r.error.message);
+  }
+  if (!data) {                                   // sin internet: usar la caché
+    if (!local.length) return status('Sin conexión y todavía no hay datos guardados.');
+    wheels = local.sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
+    setOffline(true, await metaGet('lastSync'));
+  } else {
+    setOffline(false);
+    wheels = data;
+    if (!wheels.length) return createWheel('¿Qué comemos?', ['Pizza','Sushi','Empanadas','Milanesa','Pastas']);
+    syncCache(local);                            // en segundo plano
+  }
+  renderList();
+  if (keep && cur) return;
+  const last = safe(() => localStorage.getItem('ruletas:last'));
+  await selectWheel(wheels.find(w => w.id === last) ? last : wheels[0].id);
+}
+
+// Baja solo las ruletas nuevas o modificadas y borra de la caché las eliminadas
+async function syncCache(local) {
+  const byId = new Map(local.map(w => [w.id, w]));
+  for (const w of local) if (!wheels.some(x => x.id === w.id)) await cacheDel(w.id);
+  const stale = wheels.filter(w => !byId.get(w.id) || byId.get(w.id).updated_at !== w.updated_at).map(w => w.id);
+  for (let i = 0; i < stale.length; i += 20) {
+    const { data, error } = await db.from('wheels').select('*').in('id', stale.slice(i, i + 20));
+    if (error) return;
+    for (const w of data) await cachePut(w);
+  }
+  await metaSet('lastSync', Date.now());
+}
+
+function renderList() {
+  $('list').innerHTML = '';
+  wheels.forEach(w => {
+    const b = document.createElement('button');
+    b.className = 'it' + (cur && w.id === cur.id ? ' on' : '');
+    const s = document.createElement('span'); s.textContent = w.name || 'Sin nombre';
+    const c = document.createElement('small'); c.textContent = w.item_count;
+    b.append(s, c);
+    b.onclick = () => { if (!spinning) selectWheel(w.id) };
+    $('list').append(b);
+  });
+}
+
+async function selectWheel(id) {
+  status('Cargando…');
+  let w = null;
+  if (!offline) {
+    const meta = wheels.find(x => x.id === id), c = await cacheGet(id);
+    if (c && meta && c.updated_at === meta.updated_at) w = c;
+    else {
+      const r = await db.from('wheels').select('*').eq('id', id).single();
+      if (!r.error) { w = r.data; cachePut(w); }
+    }
+  }
+  if (!w) w = await cacheGet(id);                // respaldo si falla la red
+  if (!w) return status(offline ? 'Esa ruleta no está guardada offline.' : 'No se pudo cargar.');
+  cur = w; rot = 0;
+  $('name').readOnly = $('opts').readOnly = offline;
+  safe(() => localStorage.setItem('ruletas:last', id));
+  $('name').value = cur.name;
+  $('opts').value = cur.items.join('\n');
+  $('cnt').textContent = cur.items.length;
+  $('res').textContent = '';
+  status(''); renderList(); buildWheel(); draw();
+}
+
+async function createWheel(name, items) {
+  const { data, error } = await db.from('wheels')
+    .insert({ name, items, item_count: items.length }).select('*').single();
+  if (error) return status('Error: ' + error.message);
+  cachePut(data); wheels.push(data); await selectWheel(data.id);
+}
+
+let t;
+function scheduleSave() {
+  if (offline) return;
+  status('Guardando…'); clearTimeout(t);
+  t = setTimeout(async () => {
+    const w = cur; if (!w) return;
+    const now = new Date().toISOString();
+    const { error } = await db.from('wheels').update({
+      name: w.name, items: w.items, item_count: w.items.length, updated_at: now
+    }).eq('id', w.id);
+    if (error) return status('Error al guardar: ' + error.message);
+    w.updated_at = now; w.item_count = w.items.length;
+    const m = wheels.find(x => x.id === w.id); if (m) m.updated_at = now;
+    cachePut(w); status('Guardado ✓');
+  }, 700);
+}
+
+/* ---- Dibujo: la rueda se pinta una sola vez y luego solo se rota ---- */
+function buildWheel() {
+  if (!cur) return;
+  const n = cur.items.length, S = 900;
+  off = document.createElement('canvas'); off.width = off.height = S;
+  const g = off.getContext('2d'), c = S / 2, r = c - 6;
+  if (!n) { off = null; return; }
+  const step = Math.PI * 2 / n;
+  for (let i = 0; i < n; i++) {
+    const a = i * step;
+    g.beginPath(); g.moveTo(c, c); g.arc(c, c, r, a, a + step + (n > 1 ? 0.004 : 0)); g.closePath();
+    g.fillStyle = `hsl(${(i * 137.5) % 360},68%,${i % 2 ? 54 : 62}%)`; g.fill();
+    if (n <= 120) { g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 3; g.stroke(); }
+  }
+  if (n <= 60) {                                   // textos solo si entran
+    const fs = Math.max(18, Math.min(40, 2 * Math.PI * r * 0.6 / n * 0.8));
+    g.font = `600 ${fs}px system-ui`; g.textAlign = 'right'; g.textBaseline = 'middle';
+    g.shadowColor = 'rgba(0,0,0,.4)'; g.shadowBlur = 5; g.fillStyle = '#fff';
+    for (let i = 0; i < n; i++) {
+      let s = cur.items[i]; const max = r * 0.72;
+      while (g.measureText(s).width > max && s.length > 1) s = s.slice(0, -2) + '…';
+      g.save(); g.translate(c, c); g.rotate(i * step + step / 2); g.fillText(s, r - 28, 0); g.restore();
+    }
+  }
+  g.shadowBlur = 0; g.beginPath(); g.arc(c, c, 34, 0, 7); g.fillStyle = '#fff'; g.fill();
+}
+
+function draw() {
+  const size = cv.clientWidth || 400, d = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(size * d)) cv.width = cv.height = Math.round(size * d);
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
+  if (!off) {
+    ctx.fillStyle = '#888'; ctx.font = `${16 * d}px system-ui`; ctx.textAlign = 'center';
+    ctx.fillText('Agregá opciones para empezar', cv.width / 2, cv.height / 2); return;
+  }
+  ctx.translate(cv.width / 2, cv.height / 2); ctx.rotate(rot);
+  ctx.drawImage(off, -cv.width / 2, -cv.height / 2, cv.width, cv.height);
+}
+
+function winner() {
+  const n = cur.items.length, step = Math.PI * 2 / n;
+  let a = (-Math.PI / 2 - rot) % (Math.PI * 2); if (a < 0) a += Math.PI * 2;
+  return Math.min(n - 1, Math.floor(a / step));
+}
+
+$('spin').onclick = () => {
+  if (spinning || !cur || !cur.items.length) return;
+  spinning = true; $('spin').disabled = true; $('res').textContent = '';
+  const start = rot, total = Math.PI * 2 * (5 + Math.random() * 3) + Math.random() * Math.PI * 2;
+  const dur = 4500, t0 = performance.now();
+  (function f(now) {
+    const p = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - p, 3.4);
+    rot = start + total * e; draw();
+    if (p < 1) requestAnimationFrame(f);
+    else { spinning = false; $('spin').disabled = false; $('res').textContent = cur.items[winner()]; }
+  })(t0);
+};
+
+let rb;
+$('name').oninput = e => { if (!cur || offline) return; cur.name = e.target.value; const w = wheels.find(x => x.id === cur.id); if (w) w.name = cur.name; renderList(); scheduleSave(); };
+$('opts').oninput = e => {
+  if (!cur || offline) return;
+  cur.items = e.target.value.split('\n').map(s => s.trim()).filter(Boolean);
+  $('cnt').textContent = cur.items.length;
+  const w = wheels.find(x => x.id === cur.id); if (w) w.item_count = cur.items.length;
+  renderList(); scheduleSave();
+  clearTimeout(rb); rb = setTimeout(() => { buildWheel(); draw(); }, 250);
+};
+$('new').onclick = () => { if (!spinning && db && !offline) createWheel('Nueva ruleta', ['Opción 1', 'Opción 2', 'Opción 3']); };
+$('refresh').onclick = () => { if (!spinning && db) loadList(true); };
+$('del').onclick = async () => {
+  if (spinning || offline || !cur || !confirm('¿Eliminar "' + (cur.name || 'esta ruleta') + '"?')) return;
+  const { error } = await db.from('wheels').delete().eq('id', cur.id);
+  if (error) return status('Error: ' + error.message);
+  await cacheDel(cur.id); cur = null; await loadList();
+};
+window.addEventListener('resize', draw);
+window.addEventListener('online', () => { if (db) loadList(true); });
+window.addEventListener('offline', async () => setOffline(true, await metaGet('lastSync')));
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+if (db) loadList(); else { cur = { id: 0, name: '', items: [] }; draw(); }
+</script>
+</body>
+</html>
